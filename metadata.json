@@ -1,0 +1,6 @@
+{
+  "name": "ChromaShift - Photoshop RGB Color Training",
+  "description": "Photoshop 가산혼합 원리와 채널 보정 감각을 기르는 오프라인 웹 훈련 서비스 기획 및 인터랙티브 스튜디오",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

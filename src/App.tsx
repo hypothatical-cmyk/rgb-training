@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ALL,
   UNITS,
@@ -99,9 +99,10 @@ export default function App() {
     );
   };
 
-  // Render visual canvas whenever question changes
+  // Current active question
   const currentQ = activeLesson && activeLesson.queue.length > 0 ? activeLesson.queue[0] : null;
 
+  // Render visual canvas whenever question changes
   useEffect(() => {
     if (view === 'lesson' && !activeLesson?.showRule && currentQ && visualRef.current) {
       visualRef.current.innerHTML = '';
@@ -139,48 +140,50 @@ export default function App() {
   const gradeAnswer = (ok: boolean, ansText: string) => {
     if (!currentQ || !activeLesson) return;
     setEvaluated({ ok, ansText });
-
-    setActiveLesson((prev) => {
-      if (!prev) return null;
-      const newQueue = prev.queue.slice(1);
-      if (ok) {
-        return {
-          ...prev,
-          solved: prev.solved + 1,
-          first: !currentQ.retry ? prev.first + 1 : prev.first,
-          queue: newQueue,
-        };
-      } else {
-        // Push failed question to end of queue with retry tag
-        newQueue.push({
-          ...currentQ,
-          retry: true,
-        });
-        return {
-          ...prev,
-          wrong: prev.wrong + 1,
-          queue: newQueue,
-        };
-      }
-    });
+    // Note: Do NOT slice or mutate the queue yet so currentQ remains displayed with feedback
   };
 
   // Continue to Next Question or Finish
   const handleContinue = () => {
-    if (!activeLesson) return;
+    if (!activeLesson || !currentQ || !evaluated) return;
+
+    const ok = evaluated.ok;
+    const isRetry = !!currentQ.retry;
+    const newSolved = ok ? activeLesson.solved + 1 : activeLesson.solved;
+    const newFirst = ok && !isRetry ? activeLesson.first + 1 : activeLesson.first;
+    const newWrong = !ok ? activeLesson.wrong + 1 : activeLesson.wrong;
+
+    const remainingQueue = ok
+      ? activeLesson.queue.slice(1)
+      : [...activeLesson.queue.slice(1), { ...currentQ, retry: true }];
+
     setSelectedOption(null);
     setSwitchValues([0, 0, 0]);
     setEvaluated(null);
 
-    if (activeLesson.queue.length === 0) {
-      finishLesson();
+    if (remainingQueue.length === 0) {
+      finishLesson(newFirst, newWrong);
+    } else {
+      setActiveLesson((prev) =>
+        prev
+          ? {
+              ...prev,
+              solved: newSolved,
+              first: newFirst,
+              wrong: newWrong,
+              queue: remainingQueue,
+            }
+          : null
+      );
     }
   };
 
   // Finish Lesson
-  const finishLesson = () => {
+  const finishLesson = (finalFirst?: number, finalWrong?: number) => {
     if (!activeLesson) return;
-    const gained = 10 + activeLesson.first * 2;
+    const firstCount = finalFirst !== undefined ? finalFirst : activeLesson.first;
+    const wrongCount = finalWrong !== undefined ? finalWrong : activeLesson.wrong;
+    const gained = 10 + firstCount * 2;
     const today = todayStr();
 
     updateState((prev) => {
@@ -200,6 +203,17 @@ export default function App() {
         last: today,
       };
     });
+
+    setActiveLesson((prev) =>
+      prev
+        ? {
+            ...prev,
+            first: firstCount,
+            wrong: wrongCount,
+            queue: [],
+          }
+        : null
+    );
 
     setView('done');
   };
@@ -296,94 +310,10 @@ export default function App() {
   );
 
   // -------------------------
-  // VIEW: HOME
-  // -------------------------
-  if (view === 'home') {
-    let globalIdx = 0;
-    return (
-      <div className="app">
-        {renderTopBar()}
-
-        {/* 오늘의 목표 카드 */}
-        <div className="goal">
-          <div>
-            <b>오늘의 목표</b>{' '}
-            <small className="mono">
-              {Math.min(dayXpVal, GOAL_XP)} / {GOAL_XP} XP
-            </small>
-          </div>
-          <button
-            type="button"
-            className="practice"
-            disabled={!anyDone}
-            onClick={startQuickPractice}
-          >
-            빠른 복습
-          </button>
-          <div className="bar">
-            <span style={{ width: `${Math.min(100, (dayXpVal / GOAL_XP) * 100)}%` }} />
-          </div>
-        </div>
-
-        {/* 7개 유닛 및 지그재그 레슨 패스 */}
-        {UNITS.map((unit, uIdx) => (
-          <section key={unit.id} className="unit" style={{ ['--uc' as string]: unit.color }}>
-            <div className="unit-head">
-              <small>UNIT {uIdx + 1} · {unit.sub}</small>
-              <h2>{unit.title}</h2>
-              <p>{unit.desc}</p>
-            </div>
-
-            <div className="path">
-              {unit.lessons.map((lesson) => {
-                const i = globalIdx++;
-                const isDone = !!appState.done[lesson.id];
-                const isCurrent = i === currentLessonIndex;
-                const isLocked = !isDone && !isCurrent;
-                const status = isDone ? 'done' : isCurrent ? 'current' : 'locked';
-                const xOffset = Math.round(Math.sin(i * 1.25) * 70);
-
-                return (
-                  <div
-                    key={lesson.id}
-                    ref={isCurrent ? currentNodeRef : null}
-                    className={`node-wrap ${status}`}
-                    style={{ transform: `translateX(${xOffset}px)` }}
-                  >
-                    {isCurrent && <span className="bubble">시작</span>}
-                    <button
-                      type="button"
-                      className={`node ${status}`}
-                      aria-label={lesson.title}
-                      aria-disabled={isLocked}
-                      onClick={() => {
-                        if (isLocked) return;
-                        startLesson({ ...lesson, unit });
-                      }}
-                    >
-                      {isDone ? IconDone : isCurrent ? IconPlay : IconLock}
-                    </button>
-                    <span className="node-label">{lesson.title}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ))}
-
-        <p className="foot">
-          한 레슨 약 2분 · 틀린 문제는 레슨 끝에 다시 나와요<br />
-          문제는 매번 새로 만들어져서 반복해도 같은 숫자가 안 나와요
-        </p>
-      </div>
-    );
-  }
-
-  // -------------------------
-  // VIEW: LESSON
+  // 1. VIEW: LESSON
   // -------------------------
   if (view === 'lesson' && activeLesson) {
-    // 1. 규칙 카드 (Rule Card)
+    // 1-A. 규칙 카드 (Rule Card)
     if (activeLesson.showRule && activeLesson.lesson.rule) {
       const r = activeLesson.lesson.rule;
       return (
@@ -440,163 +370,164 @@ export default function App() {
       );
     }
 
-    // 2. 문제 화면 (Active Question)
-    if (!currentQ) return null;
+    // 1-B. 문제 화면 (Active Question)
+    if (currentQ) {
+      const isChoice = currentQ.type === 'choice';
+      const isSwitch = currentQ.type === 'switch';
+      const isChecked = evaluated !== null;
+      const displayedSolved = evaluated?.ok ? activeLesson.solved + 1 : activeLesson.solved;
 
-    const isChoice = currentQ.type === 'choice';
-    const isSwitch = currentQ.type === 'switch';
-    const isChecked = evaluated !== null;
-
-    return (
-      <div className="app">
-        <div className="lesson">
-          <div className="lhead">
-            <button
-              type="button"
-              className="x"
-              aria-label="레슨 나가기"
-              onClick={() => setView('home')}
-            >
-              ×
-            </button>
-            <div className="prog">
-              <span style={{ width: `${(activeLesson.solved / activeLesson.total) * 100}%` }} />
-            </div>
-          </div>
-
-          <div className="qbody">
-            <span className="tag">{activeLesson.lesson.title}</span>
-            {currentQ.retry && <span className="retry">다시 풀기</span>}
-            <div className="prompt" dangerouslySetInnerHTML={{ __html: currentQ.prompt }} />
-
-            {/* Visual Canvas/Swatches Container */}
-            {currentQ.visual && <div className="visual" ref={visualRef} />}
-
-            {/* Question Type: Choice */}
-            {isChoice && currentQ.options && (
-              <div
-                className={`opts ${
-                  currentQ.options.some((o) => o.color) || currentQ.options.every((o) => o.mono)
-                    ? 'grid'
-                    : ''
-                }`}
-              >
-                {currentQ.options.map((opt, idx) => {
-                  const isSel = selectedOption === idx;
-                  const isRight = isChecked && idx === currentQ.answer;
-                  const isWrong = isChecked && isSel && idx !== currentQ.answer;
-
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      disabled={isChecked}
-                      className={`opt ${isSel ? 'sel' : ''} ${isRight ? 'right' : ''} ${
-                        isWrong ? 'wrong' : ''
-                      }`}
-                      onClick={() => setSelectedOption(idx)}
-                    >
-                      <span className="k">{idx + 1}</span>
-                      {opt.color && <span className="s" style={{ background: css(opt.color) }} />}
-                      <span className={opt.mono ? 'mono' : ''}>{opt.text || ''}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Question Type: Switch */}
-            {isSwitch && currentQ.target && currentQ.levels && (
-              <div>
-                <div className="visual" style={{ marginBottom: 14 }}>
-                  <div className="sw">
-                    <div style={{ background: css(currentQ.target) }} />
-                    <span>목표</span>
-                  </div>
-                  <div className="op">
-                    <b>→</b>
-                  </div>
-                  <div className="sw">
-                    <div style={{ background: css(switchValues) }} />
-                    <span>내가 만든 색</span>
-                    <b>{switchValues.join(' · ')}</b>
-                  </div>
-                </div>
-
-                <div className="mixer">
-                  {[0, 1, 2].map((chIdx) => (
-                    <div key={chIdx} className="mix-row">
-                      <b style={{ color: CHC[chIdx] }}>{CH[chIdx]}</b>
-                      <div className="lv" style={{ ['--cc' as string]: CHC[chIdx] }}>
-                        {currentQ.levels!.map((lvl) => (
-                          <button
-                            key={lvl}
-                            type="button"
-                            disabled={isChecked}
-                            className={switchValues[chIdx] === lvl ? 'on' : ''}
-                            onClick={() => {
-                              const next = [...switchValues] as [number, number, number];
-                              next[chIdx] = lvl;
-                              setSwitchValues(next);
-                            }}
-                          >
-                            {currentQ.levels!.length === 2
-                              ? lvl
-                                ? '켜기 255'
-                                : '끄기 0'
-                              : lvl}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Sticky Bottom Dock */}
-          <div className="dock">
-            {evaluated ? (
-              <div className={`fb ${evaluated.ok ? 'ok' : 'bad'}`}>
-                <h3>
-                  {evaluated.ok
-                    ? ['정확해요', '맞아요', '계산 그대로예요'][Math.floor(Math.random() * 3)]
-                    : '다시 생각해 봐요'}
-                </h3>
-                {!evaluated.ok && (
-                  <p>
-                    정답: <span className="ans">{evaluated.ansText}</span>
-                  </p>
-                )}
-                <p dangerouslySetInnerHTML={{ __html: currentQ.explain }} />
-                {currentQ.after && <div className="after" ref={afterRef} />}
-                <button
-                  type="button"
-                  className={`cta ${evaluated.ok ? 'ok' : 'bad'}`}
-                  onClick={handleContinue}
-                >
-                  계속
-                </button>
-              </div>
-            ) : (
+      return (
+        <div className="app">
+          <div className="lesson">
+            <div className="lhead">
               <button
                 type="button"
-                className="cta"
-                disabled={isChoice ? selectedOption === null : false}
-                onClick={handleCheck}
+                className="x"
+                aria-label="레슨 나가기"
+                onClick={() => setView('home')}
               >
-                확인
+                ×
               </button>
-            )}
+              <div className="prog">
+                <span style={{ width: `${Math.min(100, (displayedSolved / activeLesson.total) * 100)}%` }} />
+              </div>
+            </div>
+
+            <div className="qbody">
+              <span className="tag">{activeLesson.lesson.title}</span>
+              {currentQ.retry && <span className="retry">다시 풀기</span>}
+              <div className="prompt" dangerouslySetInnerHTML={{ __html: currentQ.prompt }} />
+
+              {/* Visual Canvas/Swatches Container */}
+              {currentQ.visual && <div className="visual" ref={visualRef} />}
+
+              {/* Question Type: Choice */}
+              {isChoice && currentQ.options && (
+                <div
+                  className={`opts ${
+                    currentQ.options.some((o) => o.color) || currentQ.options.every((o) => o.mono)
+                      ? 'grid'
+                      : ''
+                  }`}
+                >
+                  {currentQ.options.map((opt, idx) => {
+                    const isSel = selectedOption === idx;
+                    const isRight = isChecked && idx === currentQ.answer;
+                    const isWrong = isChecked && isSel && idx !== currentQ.answer;
+
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={isChecked}
+                        className={`opt ${isSel ? 'sel' : ''} ${isRight ? 'right' : ''} ${
+                          isWrong ? 'wrong' : ''
+                        }`}
+                        onClick={() => setSelectedOption(idx)}
+                      >
+                        <span className="k">{idx + 1}</span>
+                        {opt.color && <span className="s" style={{ background: css(opt.color) }} />}
+                        <span className={opt.mono ? 'mono' : ''}>{opt.text || ''}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Question Type: Switch */}
+              {isSwitch && currentQ.target && currentQ.levels && (
+                <div>
+                  <div className="visual" style={{ marginBottom: 14 }}>
+                    <div className="sw">
+                      <div style={{ background: css(currentQ.target) }} />
+                      <span>목표</span>
+                    </div>
+                    <div className="op">
+                      <b>→</b>
+                    </div>
+                    <div className="sw">
+                      <div style={{ background: css(switchValues) }} />
+                      <span>내가 만든 색</span>
+                      <b>{switchValues.join(' · ')}</b>
+                    </div>
+                  </div>
+
+                  <div className="mixer">
+                    {[0, 1, 2].map((chIdx) => (
+                      <div key={chIdx} className="mix-row">
+                        <b style={{ color: CHC[chIdx] }}>{CH[chIdx]}</b>
+                        <div className="lv" style={{ ['--cc' as string]: CHC[chIdx] }}>
+                          {currentQ.levels!.map((lvl) => (
+                            <button
+                              key={lvl}
+                              type="button"
+                              disabled={isChecked}
+                              className={switchValues[chIdx] === lvl ? 'on' : ''}
+                              onClick={() => {
+                                const next = [...switchValues] as [number, number, number];
+                                next[chIdx] = lvl;
+                                setSwitchValues(next);
+                              }}
+                            >
+                              {currentQ.levels!.length === 2
+                                ? lvl
+                                  ? '켜기 255'
+                                  : '끄기 0'
+                                : lvl}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Sticky Bottom Dock */}
+            <div className="dock">
+              {evaluated ? (
+                <div className={`fb ${evaluated.ok ? 'ok' : 'bad'}`}>
+                  <h3>
+                    {evaluated.ok
+                      ? ['정확해요', '맞아요', '계산 그대로예요'][Math.floor(Math.random() * 3)]
+                      : '다시 생각해 봐요'}
+                  </h3>
+                  {!evaluated.ok && (
+                    <p>
+                      정답: <span className="ans">{evaluated.ansText}</span>
+                    </p>
+                  )}
+                  <p dangerouslySetInnerHTML={{ __html: currentQ.explain }} />
+                  {currentQ.after && <div className="after" ref={afterRef} />}
+                  <button
+                    type="button"
+                    className={`cta ${evaluated.ok ? 'ok' : 'bad'}`}
+                    onClick={handleContinue}
+                  >
+                    계속
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="cta"
+                  disabled={isChoice ? selectedOption === null : false}
+                  onClick={handleCheck}
+                >
+                  확인
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
   }
 
   // -------------------------
-  // VIEW: DONE
+  // 2. VIEW: DONE
   // -------------------------
   if (view === 'done' && activeLesson) {
     const gained = 10 + activeLesson.first * 2;
@@ -658,5 +589,85 @@ export default function App() {
     );
   }
 
-  return null;
+  // -------------------------
+  // 3. DEFAULT / FALLBACK: HOME
+  // -------------------------
+  let globalIdx = 0;
+  return (
+    <div className="app">
+      {renderTopBar()}
+
+      {/* 오늘의 목표 카드 */}
+      <div className="goal">
+        <div>
+          <b>오늘의 목표</b>{' '}
+          <small className="mono">
+            {Math.min(dayXpVal, GOAL_XP)} / {GOAL_XP} XP
+          </small>
+        </div>
+        <button
+          type="button"
+          className="practice"
+          disabled={!anyDone}
+          onClick={startQuickPractice}
+        >
+          빠른 복습
+        </button>
+        <div className="bar">
+          <span style={{ width: `${Math.min(100, (dayXpVal / GOAL_XP) * 100)}%` }} />
+        </div>
+      </div>
+
+      {/* 7개 유닛 및 지그재그 레슨 패스 */}
+      {UNITS.map((unit, uIdx) => (
+        <section key={unit.id} className="unit" style={{ ['--uc' as string]: unit.color }}>
+          <div className="unit-head">
+            <small>UNIT {uIdx + 1} · {unit.sub}</small>
+            <h2>{unit.title}</h2>
+            <p>{unit.desc}</p>
+          </div>
+
+          <div className="path">
+            {unit.lessons.map((lesson) => {
+              const i = globalIdx++;
+              const isDone = !!appState.done[lesson.id];
+              const isCurrent = i === currentLessonIndex;
+              const isLocked = !isDone && !isCurrent;
+              const status = isDone ? 'done' : isCurrent ? 'current' : 'locked';
+              const xOffset = Math.round(Math.sin(i * 1.25) * 70);
+
+              return (
+                <div
+                  key={lesson.id}
+                  ref={isCurrent ? currentNodeRef : null}
+                  className={`node-wrap ${status}`}
+                  style={{ transform: `translateX(${xOffset}px)` }}
+                >
+                  {isCurrent && <span className="bubble">시작</span>}
+                  <button
+                    type="button"
+                    className={`node ${status}`}
+                    aria-label={lesson.title}
+                    aria-disabled={isLocked}
+                    onClick={() => {
+                      if (isLocked) return;
+                      startLesson({ ...lesson, unit });
+                    }}
+                  >
+                    {isDone ? IconDone : isCurrent ? IconPlay : IconLock}
+                  </button>
+                  <span className="node-label">{lesson.title}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+
+      <p className="foot">
+        한 레슨 약 2분 · 틀린 문제는 레슨 끝에 다시 나와요<br />
+        문제는 매번 새로 만들어져서 반복해도 같은 숫자가 안 나와요
+      </p>
+    </div>
+  );
 }
